@@ -70,7 +70,10 @@ export default {
     }
 
     const update = (await request.json()) as TelegramUpdate;
-    const chatId = update.message?.chat.id ?? update.stopped_message_generation?.chat.id;
+    const chatId =
+      update.message?.chat.id ??
+      update.stopped_message_generation?.chat.id ??
+      update.callback_query?.message?.chat.id;
     if (!chatId) return new Response('ok');
 
     const stub = env.CHAT_SESSION.get(env.CHAT_SESSION.idFromName(String(chatId)));
