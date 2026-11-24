@@ -124,6 +124,18 @@ export function getSummaryBlock(sql: SqlLike): string {
   return r.length ? String(r[0].value) : '';
 }
 
+export function getModel(sql: SqlLike): string | null {
+  const r = rows(sql, "SELECT value FROM meta WHERE key = 'llm_model'");
+  return r.length ? String(r[0].value) : null;
+}
+
+export function setModel(sql: SqlLike, model: string | null): void {
+  if (!rows(sql, "SELECT 1 FROM meta WHERE key = 'llm_model'").length) {
+    run(sql, "INSERT INTO meta(key, value) VALUES ('llm_model', '')");
+  }
+  run(sql, "UPDATE meta SET value = ? WHERE key = 'llm_model'", model ?? '');
+}
+
 export function appendSummary(sql: SqlLike, chunk: string): void {
   if (!rows(sql, 'SELECT 1 FROM meta WHERE key = ?', 'summary_block').length) {
     run(sql, 'INSERT INTO meta(key, value) VALUES (?, ?)', 'summary_block', '');

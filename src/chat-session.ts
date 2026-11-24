@@ -5,7 +5,7 @@ import { makeExecutor } from './tools';
 import {
   run,
   appendSummary, dueReminders, earliestReminderAt, getSummaryBlock, insertMessage,
-  initSchema, lastMessageAt, markOutOfContext, markResponded, oldestInContext, openSession,
+  initSchema, lastMessageAt, markOutOfContext, markResponded, getModel, setModel, oldestInContext, openSession,
   PROFILE_BUDGET, NOTES_BUDGET, reminderAfterFire, rows, sessionMessageCount,
   sessionTranscript, setReminder, SqlLike, storeSize, storeText, tailMessages, todayPlan,
   unresponded, upcomingReminders, currentSessionId, type Reminder,
@@ -92,6 +92,7 @@ export class ChatSessionV5 {
       return Response.json({
         now: nowMsk(),
         nowEpoch: Date.now(),
+        model: getModel(this.sql),
         sessions: c('SELECT COUNT(*) AS n FROM sessions'),
         messages: c('SELECT COUNT(*) AS n FROM messages'),
         unresponded: c('SELECT COUNT(*) AS n FROM messages WHERE responded = 0'),
@@ -120,10 +121,41 @@ export class ChatSessionV5 {
       const allowed = this.env.ALLOWED_USER_IDS.split(',').map((id) => id.trim()).filter(Boolean);
       if (allowed.length === 0 || allowed.includes(String(message.from?.id))) {
         await this.ctx.storage.put('chat_id', message.chat.id);
+        if (message.text.startsWith('/model')) {
+          await this.handleModelCommand(message.text, message.chat.id);
+          return new Response('ok');
+        }
         await this.enqueue(message.text);
       }
     }
     return new Response('ok');
+  }
+
+  private static readonly MODELS = [
+    'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-terra', 'gpt-6.1-sol',
+    'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra',
+  ];
+
+  private async handleModelCommand(text: string, chatId: number): Promise<void> {
+    const arg = text.replace(/^\s*\/model\s*/i, '').trim().toLowerCase();
+    const current = getModel(this.sql);
+    const active = current || this.env.LLM_MODEL;
+    if (!arg) {
+      const list = ChatSessionV5.MODELS.map((m) => `${m === active ? '●' : '○'} ${m}${m === this.env.LLM_MODEL ? ' (дефолт)' : ''}`).join('\n');
+      await sendPlainText(this.env, chatId, undefined, `Модели (сейчас: ${active}):\n${list}\n\nПереключить: /model <имя>, сбросить: /model reset`);
+      return;
+    }
+    if (arg === 'reset') {
+      setModel(this.sql, null);
+      await sendPlainText(this.env, chatId, undefined, `Сброшено на дефолт: ${this.env.LLM_MODEL}`);
+      return;
+    }
+    if (!ChatSessionV5.MODELS.includes(arg)) {
+      await sendPlainText(this.env, chatId, undefined, `Не знаю модель «${arg}». Доступны:\n${ChatSessionV5.MODELS.join(', ')}\n(или /model reset)`);
+      return;
+    }
+    setModel(this.sql, arg);
+    await sendPlainText(this.env, chatId, undefined, `Переключено на ${arg}. Действует на чат, напоминания и сводки; переживает перезапуски.`);
   }
 
   // ---------- alarm ----------
@@ -206,7 +238,7 @@ export class ChatSessionV5 {
     };
     try {
       await pushDraft(true);
-      for await (const delta of streamWithTools(this.env, this.systemPrompt(), [{ role: 'user', content: rem.text }], null, controller.signal)) {
+      for await (const delta of streamWithTools(this.env, this.systemPrompt(), [{ role: 'user', content: rem.text }], null, controller.signal, getModel(this.sql))) {
         if (this.stoppedDraftId === draftId) break;
         text += delta;
         await pushDraft();
@@ -226,6 +258,11 @@ export class ChatSessionV5 {
   // ---------- message intake & sessions ----------
 
   private async enqueue(text: string): Promise<void> {
+    if (text.startsWith('/model')) {
+      const chatId = await this.chatId();
+      if (chatId) await this.handleModelCommand(text, chatId);
+      return;
+    }
     await this.closeSessionIfNeeded();
     const sid = currentSessionId(this.sql) ?? openSession(this.sql);
     insertMessage(this.sql, sid, 'user', text, 0);
@@ -246,7 +283,7 @@ export class ChatSessionV5 {
       try {
         summary = await completeOnce(this.env, SUMMARY_INSTRUCTIONS,
           `Сводка прежних разговоров (для контекста):\n${prior}\n\nЗавершающийся диалог:\n${transcript.slice(-12000)}`,
-          new AbortController().signal);
+          new AbortController().signal, getModel(this.sql));
       } catch { /* network hiccup — fallback below */ }
       const chunk = summary?.trim() || transcript.slice(-800);
       await appendSummary(this.sql, chunk);
@@ -298,7 +335,7 @@ export class ChatSessionV5 {
       await pushDraft(true);
 
       const execTool = makeExecutor({ sql: this.sql, rearm: () => this.rearm(), env: this.env });
-      for await (const delta of streamWithTools(this.env, this.systemPrompt(), input, execTool, controller.signal)) {
+      for await (const delta of streamWithTools(this.env, this.systemPrompt(), input, execTool, controller.signal, getModel(this.sql))) {
         if (this.stoppedDraftId === draftId) break;
         text += delta;
         draftText = text;
@@ -341,7 +378,7 @@ export class ChatSessionV5 {
     try {
       summary = await completeOnce(this.env, SUMMARY_INSTRUCTIONS,
         `Сводка прежних разговоров:\n${prior}\n\nУплотняемый кусок текущего диалога:\n${transcript.slice(-12000)}`,
-        new AbortController().signal);
+        new AbortController().signal, getModel(this.sql));
     } catch { /* keep raw fallback */ }
     const chunk = summary?.trim() || transcript.slice(-800);
     await appendSummary(this.sql, chunk);
