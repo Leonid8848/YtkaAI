@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ytkaai",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  "vars": {
+    "LLM_MODEL": "gpt-6.1-sol",
+    "ALLOWED_USER_IDS": "1254986688",
+    "SIWC_CLIENT_ID": "oaiapp_nczhGrh4ayMhhmjCu3aZgSkSe"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAT_SESSION", "class_name": "ChatSessionV5" },
+      { "name": "AUTH", "class_name": "AuthStore" }
+    ]
+  },
+  "triggers": { "crons": ["0 * * * *"] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChatSession"] },
+    { "tag": "v2", "new_sqlite_classes": ["AuthStore"] },
+    { "tag": "v3", "new_sqlite_classes": ["ChatSessionV2"] },
+    { "tag": "v4", "deleted_classes": ["ChatSession"] },
+    { "tag": "v5", "new_sqlite_classes": ["ChatSessionV3"] },
+    { "tag": "v6", "deleted_classes": ["ChatSessionV2"] },
+    { "tag": "v7", "new_sqlite_classes": ["ChatSessionV4"] },
+    { "tag": "v8", "deleted_classes": ["ChatSessionV3"] },
+    { "tag": "v9", "new_sqlite_classes": ["ChatSessionV5"] },
+    { "tag": "v10", "deleted_classes": ["ChatSessionV4"] }
+  ]
+}
