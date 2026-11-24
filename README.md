@@ -2,6 +2,8 @@
 
 Личный Telegram-ассистент на Cloudflare Workers: стриминг ответов с нативной кнопкой «Стоп», долговременная память, напоминания (разовые, повторяющиеся, задачи), план дня.
 
+Тип модели — расход из лимита подписки ChatGPT Plus через официальный Sign in with ChatGPT: никакого API-ключа и отдельного баланса.
+
 ## Возможности
 
 - **Стриминг в Telegram** через `sendMessageDraft` (раз в секунду, `can_stop: true`); пользователь останавливает генерацию — апдейт `stopped_message_generation` прерывает запрос к модели.
@@ -59,3 +61,4 @@ curl "https://<worker>.workers.dev/setup?key=<TELEGRAM_WEBHOOK_SECRET>"
 - Напоминания работают только в приватных чатах; черновик — до 4096 символов.
 - Лимит подписки: 429 `subscription_sharing_usage_limit_exceeded` — лимит исчерпан, бот молча дождётся (специальные коды обрабатываются как ошибки модели).
 - Секреты: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `SIWC_ACCESS_TOKEN`, `SIWC_REFRESH_TOKEN`. Локальные токены — в `.siwc/` (0600, в git не попадают).
+- Класс DO исторически зовётся `ChatSessionV5` — следствие миграций Cloudflare Durable Objects (переименование класса требует танца с миграциями; код это не затрагивает).

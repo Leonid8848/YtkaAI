@@ -5,7 +5,7 @@ import { makeExecutor } from './tools';
 import {
   run,
   appendSummary, dueReminders, earliestReminderAt, getSummaryBlock, insertMessage,
-  initSchema, lastMessageAt, markOutOfContext, markResponded, nowIso, oldestInContext, openSession,
+  initSchema, lastMessageAt, markOutOfContext, markResponded, oldestInContext, openSession,
   PROFILE_BUDGET, NOTES_BUDGET, reminderAfterFire, rows, sessionMessageCount,
   sessionTranscript, setReminder, SqlLike, storeSize, storeText, tailMessages, todayPlan,
   unresponded, upcomingReminders, currentSessionId, type Reminder,

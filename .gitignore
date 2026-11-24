@@ -4,3 +4,7 @@ node_modules/
 dist/
 
 .siwc/
+
+.DS_Store
+Thumbs.db
+*.log

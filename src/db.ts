@@ -245,9 +245,6 @@ export function sessionTranscript(sql: SqlLike, sessionId: number, limit = 100):
   ).reverse().map((x) => `${x.role === 'user' ? 'П' : 'Б'}: ${x.text}`).join('\n');
 }
 
-export function nowIso(): string {
-  return nowMsk();
-}
 
 
 export { fmtMsk, nowMsk, todayMsk, parseMskDT } from './time';
