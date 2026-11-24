@@ -5,7 +5,7 @@ import { makeExecutor } from './tools';
 import {
   run,
   appendSummary, dueReminders, earliestReminderAt, getSummaryBlock, insertMessage,
-  initSchema, lastMessageAt, markOutOfContext, markResponded, getModel, setModel, oldestInContext, openSession,
+  initSchema, lastMessageAt, markOutOfContext, markResponded, getModel, setModel, getEffort, setEffort, oldestInContext, openSession,
   PROFILE_BUDGET, NOTES_BUDGET, reminderAfterFire, rows, sessionMessageCount,
   sessionTranscript, setReminder, SqlLike, storeSize, storeText, tailMessages, todayPlan,
   unresponded, upcomingReminders, currentSessionId, type Reminder,
@@ -93,6 +93,7 @@ export class ChatSessionV5 {
         now: nowMsk(),
         nowEpoch: Date.now(),
         model: getModel(this.sql),
+        effort: getEffort(this.sql),
         sessions: c('SELECT COUNT(*) AS n FROM sessions'),
         messages: c('SELECT COUNT(*) AS n FROM messages'),
         unresponded: c('SELECT COUNT(*) AS n FROM messages WHERE responded = 0'),
@@ -125,6 +126,10 @@ export class ChatSessionV5 {
           await this.handleModelCommand(message.text, message.chat.id);
           return new Response('ok');
         }
+        if (message.text.startsWith('/effort')) {
+          await this.handleEffortCommand(message.text, message.chat.id);
+          return new Response('ok');
+        }
         await this.enqueue(message.text);
       }
     }
@@ -135,6 +140,45 @@ export class ChatSessionV5 {
     'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-terra', 'gpt-6.1-sol',
     'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra',
   ];
+
+  private static readonly EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+  // модели, у которых верх шкалы — max (ultra не поддерживается)
+  private static readonly EFFORT_CAP_MAX = ['gpt-6-luna', 'gpt-5.6-luna', 'gpt-5.6-terra'];
+
+  private effectiveEffort(): string | null {
+    const e = getEffort(this.sql);
+    if (!e) return null;
+    const m = getModel(this.sql) || this.env.LLM_MODEL;
+    return ChatSessionV5.EFFORT_CAP_MAX.includes(m) && e === 'ultra' ? 'max' : e;
+  }
+
+  private async handleEffortCommand(text: string, chatId: number): Promise<void> {
+    const arg = text.replace(/^\s*\/effort\s*/i, '').trim().toLowerCase();
+    const current = getEffort(this.sql);
+    const model = getModel(this.sql) || this.env.LLM_MODEL;
+    const cap = ChatSessionV5.EFFORT_CAP_MAX.includes(model) ? ' (у этой модели верх — max)' : '';
+    if (!arg) {
+      const list = ChatSessionV5.EFFORTS.map((e) => `${e === current ? '●' : '○'} ${e}`).join('\n');
+      await sendPlainText(this.env, chatId, undefined, `Эффорт (модель ${model}):\n${list}\n\nСейчас: ${current ?? 'дефолт маршрута'}. Переключить: /effort <имя>, сбросить: /effort reset.${cap}`);
+      return;
+    }
+    if (arg === 'reset') {
+      setEffort(this.sql, null);
+      await sendPlainText(this.env, chatId, undefined, `Эффорт сброшен на дефолт маршрута.`);
+      return;
+    }
+    if (!ChatSessionV5.EFFORTS.includes(arg)) {
+      await sendPlainText(this.env, chatId, undefined, `Не знаю эффорт «${arg}». Доступны:\n${ChatSessionV5.EFFORTS.join(', ')}\n(или /effort reset)`);
+      return;
+    }
+    if (arg === 'ultra' && ChatSessionV5.EFFORT_CAP_MAX.includes(model)) {
+      await sendPlainText(this.env, chatId, undefined, `У модели ${model} верх — max, ultra недоступен. Ставлю max.`);
+      setEffort(this.sql, 'max');
+      return;
+    }
+    setEffort(this.sql, arg);
+    await sendPlainText(this.env, chatId, undefined, `Эффорт: ${arg}. Чем выше — тем дольше думает.`);
+  }
 
   private async handleModelCommand(text: string, chatId: number): Promise<void> {
     const arg = text.replace(/^\s*\/model\s*/i, '').trim().toLowerCase();
@@ -238,7 +282,7 @@ export class ChatSessionV5 {
     };
     try {
       await pushDraft(true);
-      for await (const delta of streamWithTools(this.env, this.systemPrompt(), [{ role: 'user', content: rem.text }], null, controller.signal, getModel(this.sql))) {
+      for await (const delta of streamWithTools(this.env, this.systemPrompt(), [{ role: 'user', content: rem.text }], null, controller.signal, getModel(this.sql), this.effectiveEffort())) {
         if (this.stoppedDraftId === draftId) break;
         text += delta;
         await pushDraft();
@@ -263,6 +307,11 @@ export class ChatSessionV5 {
       if (chatId) await this.handleModelCommand(text, chatId);
       return;
     }
+    if (text.startsWith('/effort')) {
+      const chatId = await this.chatId();
+      if (chatId) await this.handleEffortCommand(text, chatId);
+      return;
+    }
     await this.closeSessionIfNeeded();
     const sid = currentSessionId(this.sql) ?? openSession(this.sql);
     insertMessage(this.sql, sid, 'user', text, 0);
@@ -283,7 +332,7 @@ export class ChatSessionV5 {
       try {
         summary = await completeOnce(this.env, SUMMARY_INSTRUCTIONS,
           `Сводка прежних разговоров (для контекста):\n${prior}\n\nЗавершающийся диалог:\n${transcript.slice(-12000)}`,
-          new AbortController().signal, getModel(this.sql));
+          new AbortController().signal, getModel(this.sql), this.effectiveEffort());
       } catch { /* network hiccup — fallback below */ }
       const chunk = summary?.trim() || transcript.slice(-800);
       await appendSummary(this.sql, chunk);
@@ -335,7 +384,7 @@ export class ChatSessionV5 {
       await pushDraft(true);
 
       const execTool = makeExecutor({ sql: this.sql, rearm: () => this.rearm(), env: this.env });
-      for await (const delta of streamWithTools(this.env, this.systemPrompt(), input, execTool, controller.signal, getModel(this.sql))) {
+      for await (const delta of streamWithTools(this.env, this.systemPrompt(), input, execTool, controller.signal, getModel(this.sql), this.effectiveEffort())) {
         if (this.stoppedDraftId === draftId) break;
         text += delta;
         draftText = text;
@@ -378,7 +427,7 @@ export class ChatSessionV5 {
     try {
       summary = await completeOnce(this.env, SUMMARY_INSTRUCTIONS,
         `Сводка прежних разговоров:\n${prior}\n\nУплотняемый кусок текущего диалога:\n${transcript.slice(-12000)}`,
-        new AbortController().signal, getModel(this.sql));
+        new AbortController().signal, getModel(this.sql), this.effectiveEffort());
     } catch { /* keep raw fallback */ }
     const chunk = summary?.trim() || transcript.slice(-800);
     await appendSummary(this.sql, chunk);

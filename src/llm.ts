@@ -30,8 +30,10 @@ export async function* streamWithTools(
   execTool: ((name: string, args: any) => Promise<string>) | null,
   signal: AbortSignal,
   model?: string | null,
+  effort?: string | null,
 ): AsyncGenerator<string> {
   const auth = await getAuth(env);
+  const reasoning = effort ? { effort } : undefined;
   let cur = input;
 
   for (let round = 0; round < (execTool ? 5 : 1); round++) {
@@ -47,6 +49,7 @@ export async function* streamWithTools(
         instructions,
         input: cur,
         ...(execTool ? { tools: TOOLS } : {}),
+        ...(reasoning ? { reasoning } : {}),
         stream: true,
         store: false,
       }),
@@ -122,7 +125,7 @@ export async function* streamWithTools(
 
 /** One-shot completion used for summaries and task reminders. The ChatGPT-plan
  * route mandates stream:true on every request, so we stream and just accumulate. */
-export async function completeOnce(env: Env, instructions: string, prompt: string, signal: AbortSignal, model?: string | null): Promise<string | null> {
+export async function completeOnce(env: Env, instructions: string, prompt: string, signal: AbortSignal, model?: string | null, effort?: string | null): Promise<string | null> {
   const auth = await getAuth(env);
   const res = await fetch(RESPONSES_URL, {
     method: 'POST',
@@ -135,6 +138,7 @@ export async function completeOnce(env: Env, instructions: string, prompt: strin
       model: model ?? env.LLM_MODEL,
       instructions,
       input: [{ role: 'user', content: prompt }],
+      ...(effort ? { reasoning: { effort } } : {}),
       stream: true,
       store: false,
     }),
