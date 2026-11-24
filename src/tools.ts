@@ -3,8 +3,9 @@
 
 import * as dbm from './db';
 import { run } from './db';
+import { ddgSearch, jinaRead } from './web';
 
-export const TOOLS = [
+const CORE_TOOLS = [
   {
     type: 'function',
     name: 'memory_save',
@@ -99,18 +100,60 @@ export const TOOLS = [
   },
 ];
 
+const WEB_TOOLS = [
+  {
+    type: 'function',
+    name: 'web_search',
+    description:
+      'Поиск в интернете (DuckDuckGo). Используй для всего, что зависит от свежести: новости, цены, курсы, релизы, события новее твоих знаний. Вернёт заголовки, ссылки и сниппеты; для деталей читай страницы через web_read. В ответе пользователю приводи ссылки на источники.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'поисковый запрос; пиши на языке, на котором больше релевантных результатов' },
+        limit: { type: 'integer', description: 'сколько результатов, по умолчанию 8' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'web_read',
+    description: 'Прочитать страницу по ссылке и получить её текст (markdown). Используй после web_search, когда сниппетов мало, или когда пользователь дал ссылку.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        max_chars: { type: 'integer', description: 'максимум символов, по умолчанию 6000' },
+      },
+      required: ['url'],
+    },
+  },
+];
+
+export const TOOLS = [...CORE_TOOLS, ...WEB_TOOLS];
+
 export interface ToolDeps {
   sql: import('./db').SqlLike;
   rearm: () => Promise<void>;
 }
 
-export function makeExecutor(deps: ToolDeps): (name: string, args: any) => string {
+export function makeExecutor(deps: ToolDeps): (name: string, args: any) => Promise<string> {
   const { sql, rearm } = deps;
 
-  return (name, args): string => {
+  return async (name, args): Promise<string> => {
     try {
       const d = dbm;
       switch (name) {
+        case 'web_search': {
+          const res = await ddgSearch(String(args.query ?? ''), Math.min(Number(args.limit) || 8, 15));
+          if (typeof res === 'string') return res;
+          return res.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n');
+        }
+        case 'web_read': {
+          const url = String(args.url ?? '');
+          if (!/^https?:\/\//.test(url)) return 'error: url должен начинаться с http(s)://';
+          return await jinaRead(url, Math.min(Number(args.max_chars) || 6000, 20000));
+        }
         case 'memory_save': {
           const target = args.target === 'notes' ? 'notes' : 'profile';
           if (args.action === 'add') return d.storeAdd(sql, target, String(args.text ?? ''));

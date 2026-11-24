@@ -27,7 +27,7 @@ export async function* streamWithTools(
   env: Env,
   instructions: string,
   input: any[],
-  execTool: ((name: string, args: any) => string) | null,
+  execTool: ((name: string, args: any) => Promise<string>) | null,
   signal: AbortSignal,
 ): AsyncGenerator<string> {
   const auth = await getAuth(env);
@@ -110,9 +110,12 @@ export async function* streamWithTools(
       ...calls.map((c: any) => ({
         type: 'function_call_output',
         call_id: c.call_id,
-        output: execTool(c.name, safeJson(c.arguments)),
+        output: '',
       })),
     ];
+    for (let i = 0; i < calls.length; i++) {
+      cur[cur.length - calls.length + i].output = await execTool(calls[i].name, safeJson(calls[i].arguments));
+    }
   }
 }
 
