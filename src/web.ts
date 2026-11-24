@@ -30,6 +30,32 @@ export interface SearchResult {
   snippet: string;
 }
 
+export async function exaSearch(query: string, key: string | undefined, numResults = 8): Promise<SearchResult[] | string> {
+  if (!key) return 'search error: EXA_API_KEY не задан';
+  const res = await fetch('https://api.exa.ai/search', {
+    method: 'POST',
+    headers: { 'x-api-key': key, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      numResults: Math.min(numResults, 10),
+      type: 'lite',
+      contents: { text: { maxCharacters: 300 } },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    return `search error: Exa ${res.status}${body.slice(0, 150) ? ' — ' + body.slice(0, 150) : ''}`;
+  }
+  const j: any = await res.json();
+  const results: SearchResult[] = (j.results ?? []).map((r: any) => ({
+    title: String(r.title ?? ''),
+    url: String(r.url ?? ''),
+    snippet: String(r.text ?? '').replace(/\s+/g, ' ').trim(),
+  }));
+  if (!results.length) return 'search: Exa ничего не нашла';
+  return results;
+}
+
 export async function ddgSearch(query: string, limit = 8): Promise<SearchResult[] | string> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=ru-ru`;
   const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'text/html' } });

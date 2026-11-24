@@ -8,6 +8,7 @@ export interface Env {
   SIWC_CLIENT_ID: string;
   CHAT_SESSION: DurableObjectNamespace;
   AUTH: DurableObjectNamespace;
+  EXA_API_KEY?: string;
 }
 
 export interface CodexAuth {

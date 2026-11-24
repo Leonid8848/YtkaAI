@@ -3,7 +3,7 @@
 
 import * as dbm from './db';
 import { run } from './db';
-import { ddgSearch, jinaRead } from './web';
+import { ddgSearch, exaSearch, jinaRead } from './web';
 
 const CORE_TOOLS = [
   {
@@ -117,6 +117,20 @@ const WEB_TOOLS = [
   },
   {
     type: 'function',
+    name: 'web_search_exa',
+    description:
+      'Запасной поиск через Exa API (режим lite — самый дешёвый и быстрый). Обычный веб-поиск по тексту запроса; возвращает заголовки, ссылки и тексты страниц, отдельный web_read после него обычно не нужен. Используй, если web_search дал мало/плохого, или если пользователь прямо попросил Exa.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'поисковый запрос' },
+        num_results: { type: 'integer', description: 'сколько результатов, по умолчанию 8 (максимум 10)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    type: 'function',
     name: 'web_read',
     description: 'Прочитать страницу по ссылке и получить её текст (markdown). Используй после web_search, когда сниппетов мало, или когда пользователь дал ссылку.',
     parameters: {
@@ -135,6 +149,7 @@ export const TOOLS = [...CORE_TOOLS, ...WEB_TOOLS];
 export interface ToolDeps {
   sql: import('./db').SqlLike;
   rearm: () => Promise<void>;
+  env?: import('./env').Env;
 }
 
 export function makeExecutor(deps: ToolDeps): (name: string, args: any) => Promise<string> {
@@ -146,6 +161,11 @@ export function makeExecutor(deps: ToolDeps): (name: string, args: any) => Promi
       switch (name) {
         case 'web_search': {
           const res = await ddgSearch(String(args.query ?? ''), Math.min(Number(args.limit) || 8, 15));
+          if (typeof res === 'string') return res;
+          return res.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n');
+        }
+        case 'web_search_exa': {
+          const res = await exaSearch(String(args.query ?? ''), deps.env?.EXA_API_KEY, Math.min(Number(args.num_results) || 8, 10));
           if (typeof res === 'string') return res;
           return res.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n');
         }
