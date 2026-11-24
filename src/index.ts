@@ -20,7 +20,13 @@ export default {
         secret_token: env.TELEGRAM_WEBHOOK_SECRET,
         allowed_updates: ['message', 'stopped_message_generation'],
       });
-      return Response.json({ webhookUrl, me, webhook });
+      const commands = await api(env, 'setMyCommands', {
+        commands: [
+          { command: 'model', description: 'Выбрать модель (список / переключение / reset)' },
+          { command: 'effort', description: 'Эффорт рассуждений: low…ultra' },
+        ],
+      });
+      return Response.json({ webhookUrl, me, webhook, commands });
     }
 
     if (url.pathname === '/selftest' && request.method === 'GET') {

@@ -302,6 +302,13 @@ export class ChatSessionV5 {
   // ---------- message intake & sessions ----------
 
   private async enqueue(text: string): Promise<void> {
+    if (text === '/start' || text === '/help') {
+      const chatId = await this.chatId();
+      if (chatId) {
+        await sendPlainText(this.env, chatId, undefined, 'Привет! Я YtkaAI — твой личный ассистент: память, напоминания (в том числе задачи), план дня и поиск в интернете.\n\nКоманды:\n/model — выбор модели\n/effort — глубина рассуждений');
+      }
+      return;
+    }
     if (text.startsWith('/model')) {
       const chatId = await this.chatId();
       if (chatId) await this.handleModelCommand(text, chatId);
