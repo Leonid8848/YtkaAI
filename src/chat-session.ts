@@ -1,5 +1,5 @@
 import type { Env, TelegramMessage, TelegramUpdate } from './env';
-import { api, sendPlainText } from './telegram';
+import { api, sendPlainText, sendWithKeyboard, editWithKeyboard, answerCallback, type InlineKeyboard } from './telegram';
 import { completeOnce, streamWithTools } from './llm';
 import { makeExecutor } from './tools';
 import {
@@ -117,6 +117,18 @@ export class ChatSessionV5 {
     if (seen.includes(update.update_id)) return new Response('duplicate');
     await this.ctx.storage.put('seen', [...seen.slice(-20), update.update_id]);
 
+    if (update.callback_query?.data) {
+      const cb = update.callback_query;
+      const allowed = this.env.ALLOWED_USER_IDS.split(',').map((id) => id.trim()).filter(Boolean);
+      if (allowed.length === 0 || allowed.includes(String(cb.from?.id))) {
+        await this.ctx.storage.put('chat_id', cb.message?.chat.id ?? (await this.chatId()));
+        await this.handleCallback(cb.id, cb.data ?? '', cb.message?.chat.id, cb.message?.message_id);
+      } else {
+        await answerCallback(this.env, cb.id);
+      }
+      return new Response('ok');
+    }
+
     const message = update.message;
     if (message?.text && message.chat.type === 'private' && !message.from?.is_bot) {
       const allowed = this.env.ALLOWED_USER_IDS.split(',').map((id) => id.trim()).filter(Boolean);
@@ -152,14 +164,76 @@ export class ChatSessionV5 {
     return ChatSessionV5.EFFORT_CAP_MAX.includes(m) && e === 'ultra' ? 'max' : e;
   }
 
+  private modelKeyboard(): { text: string; kb: InlineKeyboard } {
+    const current = getModel(this.sql);
+    const active = current || this.env.LLM_MODEL;
+    const kb: InlineKeyboard = ChatSessionV5.MODELS.map((m) => [
+      { text: `${m === active ? '● ' : ''}${m}${m === this.env.LLM_MODEL ? ' · дефолт' : ''}`, callback_data: `model:${m}` },
+    ]);
+    kb.push([{ text: '↩ Сбросить на дефолт', callback_data: 'model:reset' }]);
+    return { text: `Модель: ${active}${current ? '' : ' (дефолт маршрута)'}`, kb };
+  }
+
+  private effortKeyboard(): { text: string; kb: InlineKeyboard } {
+    const current = getEffort(this.sql);
+    const model = getModel(this.sql) || this.env.LLM_MODEL;
+    const cap = ChatSessionV5.EFFORT_CAP_MAX.includes(model);
+    const kb: InlineKeyboard = ChatSessionV5.EFFORTS.map((e) => [
+      { text: `${e === current ? '● ' : ''}${e}${cap && e === 'ultra' ? ' (нет у модели)' : ''}`, callback_data: `effort:${e}` },
+    ]);
+    kb.push([{ text: '↩ Дефолт маршрута', callback_data: 'effort:reset' }]);
+    const eff = current ? `Эффорт: ${current}` : 'Эффорт: дефолт маршрута';
+    return { text: `${eff} (модель ${model})`, kb };
+  }
+
+  private async handleCallback(cbId: string, data: string, chatId?: number, messageId?: number): Promise<void> {
+    if (!chatId) { await answerCallback(this.env, cbId); return; }
+    const [kind, ...rest] = data.split(':');
+    const value = rest.join(':');
+    let toast = '';
+    if (kind === 'model') {
+      if (value === 'reset') {
+        setModel(this.sql, null);
+        toast = `Сброшено: ${this.env.LLM_MODEL}`;
+      } else if (ChatSessionV5.MODELS.includes(value)) {
+        setModel(this.sql, value);
+        toast = `Модель: ${value}`;
+      } else {
+        await answerCallback(this.env, cbId, 'Неизвестная модель');
+        return;
+      }
+    } else if (kind === 'effort') {
+      const model = getModel(this.sql) || this.env.LLM_MODEL;
+      if (value === 'reset') {
+        setEffort(this.sql, null);
+        toast = 'Эффорт: дефолт маршрута';
+      } else if (ChatSessionV5.EFFORTS.includes(value)) {
+        const eff = value === 'ultra' && ChatSessionV5.EFFORT_CAP_MAX.includes(model) ? 'max' : value;
+        setEffort(this.sql, eff);
+        toast = `Эффорт: ${eff}`;
+      } else {
+        await answerCallback(this.env, cbId, 'Неизвестный эффорт');
+        return;
+      }
+    } else {
+      await answerCallback(this.env, cbId);
+      return;
+    }
+    await answerCallback(this.env, cbId, toast);
+    if (messageId) {
+      const fresh = kind === 'model' ? this.modelKeyboard() : this.effortKeyboard();
+      await editWithKeyboard(this.env, chatId, messageId, fresh.text, fresh.kb);
+    }
+  }
+
   private async handleEffortCommand(text: string, chatId: number): Promise<void> {
     const arg = text.replace(/^\s*\/effort\s*/i, '').trim().toLowerCase();
     const current = getEffort(this.sql);
     const model = getModel(this.sql) || this.env.LLM_MODEL;
     const cap = ChatSessionV5.EFFORT_CAP_MAX.includes(model) ? ' (у этой модели верх — max)' : '';
     if (!arg) {
-      const list = ChatSessionV5.EFFORTS.map((e) => `${e === current ? '●' : '○'} ${e}`).join('\n');
-      await sendPlainText(this.env, chatId, undefined, `Эффорт (модель ${model}):\n${list}\n\nСейчас: ${current ?? 'дефолт маршрута'}. Переключить: /effort <имя>, сбросить: /effort reset.${cap}`);
+      const k = this.effortKeyboard();
+      await sendWithKeyboard(this.env, chatId, k.text, k.kb);
       return;
     }
     if (arg === 'reset') {
@@ -185,8 +259,8 @@ export class ChatSessionV5 {
     const current = getModel(this.sql);
     const active = current || this.env.LLM_MODEL;
     if (!arg) {
-      const list = ChatSessionV5.MODELS.map((m) => `${m === active ? '●' : '○'} ${m}${m === this.env.LLM_MODEL ? ' (дефолт)' : ''}`).join('\n');
-      await sendPlainText(this.env, chatId, undefined, `Модели (сейчас: ${active}):\n${list}\n\nПереключить: /model <имя>, сбросить: /model reset`);
+      const k = this.modelKeyboard();
+      await sendWithKeyboard(this.env, chatId, k.text, k.kb);
       return;
     }
     if (arg === 'reset') {

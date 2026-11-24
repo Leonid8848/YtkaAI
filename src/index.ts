@@ -18,7 +18,7 @@ export default {
       const webhook = await api(env, 'setWebhook', {
         url: webhookUrl,
         secret_token: env.TELEGRAM_WEBHOOK_SECRET,
-        allowed_updates: ['message', 'stopped_message_generation'],
+        allowed_updates: ['message', 'stopped_message_generation', 'callback_query'],
       });
       const commands = await api(env, 'setMyCommands', {
         commands: [

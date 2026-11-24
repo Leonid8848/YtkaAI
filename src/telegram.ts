@@ -38,6 +38,45 @@ export async function sendPlainText(
   return ok;
 }
 
+export type InlineKeyboard = { text: string; callback_data: string }[][];
+
+export async function sendWithKeyboard(
+  env: Env,
+  chatId: number,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<boolean> {
+  const res = await api<{ ok?: boolean }>(env, 'sendMessage', {
+    chat_id: chatId,
+    text,
+    reply_markup: { inline_keyboard: keyboard },
+  });
+  return !!res;
+}
+
+export async function editWithKeyboard(
+  env: Env,
+  chatId: number,
+  messageId: number,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<boolean> {
+  const res = await api(env, 'editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    reply_markup: { inline_keyboard: keyboard },
+  });
+  return !!res;
+}
+
+export async function answerCallback(env: Env, callbackId: string, text?: string): Promise<void> {
+  await api(env, 'answerCallbackQuery', {
+    callback_query_id: callbackId,
+    ...(text ? { text, show_alert: false } : {}),
+  });
+}
+
 function splitText(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
   const parts: string[] = [];
