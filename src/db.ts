@@ -159,8 +159,8 @@ export function appendSummary(sql: SqlLike, chunk: string): void {
 
 // ---- curated memory ----
 
-export const PROFILE_BUDGET = 1500;
-export const NOTES_BUDGET = 2200;
+export const PROFILE_BUDGET = 5000;
+export const NOTES_BUDGET = 15000;
 
 export function storeText(sql: SqlLike, target: 'profile' | 'notes'): string {
   return rows(sql, `SELECT text FROM ${target} ORDER BY id`).map((x) => `• ${x.text}`).join('\n');
